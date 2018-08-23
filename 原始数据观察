@@ -1,0 +1,20 @@
+import pandas as pd
+#读入测试数据：200多万
+test1=pd.read_csv('test1.csv')
+#len(test1) 2265989
+print test1[0:2]
+---------
+    aid       uid
+0  2118  64355836
+1   692  45051997
+---------
+#读入训练数据：800多万
+train=pd.read_csv('train.csv')
+#len(train) 8798814
+print train[0:2]
+----
+    aid       uid  label
+0   699  78508957     -1
+1  1991   3637295     -1
+------
+ad_feature=pd.read_csv('adFeature.csv')
