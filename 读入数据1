@@ -1,4 +1,8 @@
-# -*- coding:utf-8 -*-
+# coding=utf-8
+# @author:bryan
+# blog: https://blog.csdn.net/bryan__
+# github: https://github.com/YouChouNoBB/2018-tencent-ad-competition-baseline
+
 import pandas as pd
 import lightgbm as lgb
 from sklearn.model_selection import train_test_split
@@ -6,172 +10,104 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.preprocessing import OneHotEncoder,LabelEncoder
 from scipy import sparse
 import os
-import math
-#from gensim.models.word2vec import Word2Vec
-from sklearn.feature_extraction.text import CountVectorizer
 
-feature_data_path  = '../feature/'
-if os.path.exists('../data/data.csv'):
-    data =pd.read_csv('../data/data.csv')
-    print('original data is ready,行数为：',len(data))
+ad_feature=pd.read_csv('../data/adFeature.csv')
+if os.path.exists('../data/userFeature.csv'):
+    user_feature=pd.read_csv('../data/userFeature.csv')
 else:
-    ad_feature=pd.read_csv('../data/adFeature.csv')
-    if os.path.exists('../data/userFeature.csv'):
-        user_feature=pd.read_csv('../data/userFeature.csv')
-    else:
-        userFeature_data = []
-        with open('../data/userFeature.data', 'r') as f:
-            for i, line in enumerate(f):
-                line = line.strip().split('|')
-                userFeature_dict = {}
-                for each in line:
-                    each_list = each.split(' ')
-                    userFeature_dict[each_list[0]] = ' '.join(each_list[1:])
-                userFeature_data.append(userFeature_dict)
-                if i % 100000 == 0:
-                    print(i)
-            user_feature = pd.DataFrame(userFeature_data)
-            user_feature.to_csv('../data/userFeature.csv', index=False)
-    train=pd.read_csv('../data/train.csv')
-    predict=pd.read_csv('../data/test2.csv')
-    train.loc[train['label']==-1,'label']=0
-    predict['label']=-1
-    data=pd.concat([train,predict])
-    data=pd.merge(data,ad_feature,on='aid',how='left')
-    data=pd.merge(data,user_feature,on='uid',how='left')
-    data.to_csv('../data/data.csv')
+    userFeature_data = []
+    with open('../data/userFeature.data', 'r') as f:
+        cnt = 0
+        for i, line in enumerate(f):
+            line = line.strip().split('|')
+            userFeature_dict = {}
+            for each in line:
+                each_list = each.split(' ')
+                userFeature_dict[each_list[0]] = ' '.join(each_list[1:])
+            userFeature_data.append(userFeature_dict)
+            if i % 100000 == 0:
+                print(i)
+            if i % 1000000 == 0:
+                user_feature = pd.DataFrame(userFeature_data)
+                user_feature.to_csv('../data/userFeature_' + str(cnt) + '.csv', index=False)
+                cnt += 1
+                del userFeature_data, user_feature
+                userFeature_data = []
+        user_feature = pd.DataFrame(userFeature_data)
+        user_feature.to_csv('../data/userFeature_' + str(cnt) + '.csv', index=False)
+        del userFeature_data, user_feature
+        user_feature = pd.concat([pd.read_csv('../data/userFeature_' + str(i) + '.csv') for i in range(cnt + 1)]).reset_index(drop=True)
+        user_feature.to_csv('../data/userFeature.csv', index=False)
+train=pd.read_csv('../data/train.csv')
+predict=pd.read_csv('../data/test1.csv')
+train.loc[train['label']==-1,'label']=0
+predict['label']=-1
+data=pd.concat([train,predict])
+data=pd.merge(data,ad_feature,on='aid',how='left')
+data=pd.merge(data,user_feature,on='uid',how='left')
+data=data.fillna('-1')
+one_hot_feature=['LBS','age','carrier','consumptionAbility','education','gender','house','os','ct','marriageStatus','advertiserId','campaignId', 'creativeId',
+       'adCategoryId', 'productId', 'productType']
+vector_feature=['appIdAction','appIdInstall','interest1','interest2','interest3','interest4','interest5','kw1','kw2','kw3','topic1','topic2','topic3']
+for feature in one_hot_feature:
+    try:
+        data[feature] = LabelEncoder().fit_transform(data[feature].apply(int))
+    except:
+        data[feature] = LabelEncoder().fit_transform(data[feature])
 
-databin=data.sample(frac=0.01)
-databin.to_csv('../data/databin.csv')
-#get mini data
-'''
-if os.path.exists('../data/databin.csv'):
-    databin = pd.read_csv('../data/databin.csv')
-    print 'databin  is ready,行数为：\n', len(databin)
-else:
-    n=int(math.ceil(len(data) / 100)) #待选取的行数
-    databin =data[0:10000]
-    databin.to_csv('../data/databin.csv')
-'''
-'''
-#data to vectordata
-data = data.fillna('-1')
-data=data.drop(['interest3','interest4'],axis=1)
-vector_feature = ['appIdAction', 'appIdInstall', 'interest1', 'interest2', 
-                  'interest5', 'kw1', 'kw2', 'kw3', 'topic1', 'topic2', 'topic3']
-cv=CountVectorizer(token_pattern='(?u)\\b\\w+\\b')
+train=data[data.label!=-1]
+train_y=train.pop('label')
+# train, test, train_y, test_y = train_test_split(train,train_y,test_size=0.2, random_state=2018)
+test=data[data.label==-1]
+res=test[['aid','uid']]
+test=test.drop('label',axis=1)
+enc = OneHotEncoder()
+train_x=train[['creativeSize']]
+test_x=test[['creativeSize']]
+
+for feature in one_hot_feature:
+    enc.fit(data[feature].values.reshape(-1, 1))
+    train_a=enc.transform(train[feature].values.reshape(-1, 1))
+    test_a = enc.transform(test[feature].values.reshape(-1, 1))
+    train_x= sparse.hstack((train_x, train_a))
+    test_x = sparse.hstack((test_x, test_a))
+print('one-hot prepared !')
+
+cv=CountVectorizer()
 for feature in vector_feature:
     cv.fit(data[feature])
-    datavec = cv.transform(data[feature])
+    train_a = cv.transform(train[feature])
+    test_a = cv.transform(test[feature])
+    train_x = sparse.hstack((train_x, train_a))
+    test_x = sparse.hstack((test_x, test_a))
 print('cv prepared !')
-datavec.to_csv('../data/datavec.csv')
-'''
 
-'''
+def LGB_test(train_x,train_y,test_x,test_y):
+    from multiprocessing import cpu_count
+    print("LGB test")
+    clf = lgb.LGBMClassifier(
+        boosting_type='gbdt', num_leaves=31, reg_alpha=0.0, reg_lambda=1,
+        max_depth=-1, n_estimators=1000, objective='binary',
+        subsample=0.7, colsample_bytree=0.7, subsample_freq=1,
+        learning_rate=0.05, min_child_weight=50,random_state=2018,n_jobs=cpu_count()-1
+    )
+    clf.fit(train_x, train_y,eval_set=[(train_x, train_y),(test_x,test_y)],eval_metric='auc',early_stopping_rounds=100)
+    # print(clf.feature_importances_)
+    return clf,clf.best_score_[ 'valid_1']['auc']
 
-def gen_new_feature(data):
+def LGB_predict(train_x,train_y,test_x,res):
+    print("LGB test")
+    clf = lgb.LGBMClassifier(
+        boosting_type='gbdt', num_leaves=31, reg_alpha=0.0, reg_lambda=1,
+        max_depth=-1, n_estimators=1500, objective='binary',
+        subsample=0.7, colsample_bytree=0.7, subsample_freq=1,
+        learning_rate=0.05, min_child_weight=50, random_state=2018, n_jobs=100
+    )
+    clf.fit(train_x, train_y, eval_set=[(train_x, train_y)], eval_metric='auc',early_stopping_rounds=100)
+    res['score'] = clf.predict_proba(test_x)[:,1]
+    res['score'] = res['score'].apply(lambda x: float('%.6f' % x))
+    res.to_csv('../data/submission.csv', index=False)
+    os.system('zip baseline.zip ../data/submission.csv')
+    return clf
 
-    adfea = ['advertiserId']
-    userfea = ['age']
-    # userfea = ['age','education','consumptionAbility','education','gender','house','marriageStatus']
-    #num = len(adfea) * len(userfea)
-    newfeature = []
-    for i in range(len(adfea)):
-        for j in range(len(userfea)):
-            newname = adfea[i]+'1'+userfea[j]
-            lie1=adfea[i]
-            lie2=userfea[j]
-            ans1=map(str, data[lie1]) #把一列int数据转为str
-            ans2 = map(str, data[lie2])
-            newfeature[i] = [e1 + e2 for (e1, e2) in zip(ans1, ans2)]
-            #data.c=newfeature
-    return newfeature
-
-if __name__=='__main__':
-    addfea_databin=gen_new_feature(databin)
-'''
-'''
-def gen_features():
-
-    print('uid_count')
-    groupby_uid =  data.groupby('uid').size()
-    data['uid_count'] = data['uid'].apply(lambda x: groupby_uid[x])
-    data[['uid','uid_count']].to_csv(feature_data_path+'uid_count.csv',index = False)
-
-    del groupby_uid
-    gc.collect()
-
-    print('uid_appInstallcount,uid_appActioncount')
-    data['uid_appInstallcount'] = data['appIdInstall'].apply(lambda x:len([e for e in str(x).split(' ')]
-                                                             if x is not None else None
-                                                                 ))
-    data['uid_appActioncount'] = data['appIdAction'].apply(lambda x:len([e for e in str(x).split(' ')]
-                                                             if x is not None else -1
-                                                                 ))
-    data[['uid','uid_appInstallcount','uid_appActioncount']].to_csv(feature_data_path+'uid_appInstallAction.csv',index = False)
-
-
-
-    print("aid_usercount")
-    temp = data.groupby('aid')['uid'].count().reset_index()
-    temp.columns = ['aid', 'aid_count']
-    temp.to_csv(feature_data_path + 'aid_count.csv', index=False)
-
-    print("aid_gender")
-    temp = data.groupby('gender')['aid'].count().reset_index()
-    temp.columns=['aid','aid_genderCount']
-    temp.to_csv(feature_data_path+'aid_gendercount.csv',index=False)
-
-    print("aid_age")
-    temp = data.groupby('age')['aid'].count().reset_index()
-    temp.columns=['aid','aid_ageCount']
-    temp.to_csv(feature_data_path+'aid_ageCount.csv',index=False)
-
-    print("aid_marriageStatus")
-    temp = data.groupby('marriageStatus')['aid'].count().reset_index()
-    temp.columns=['aid','aid_marriageStatusCount']
-    temp.to_csv(feature_data_path+'aid_marriageStatusCount.csv',index=False)
-
-
-    print("aid_education")
-    temp = data.groupby('education')['aid'].count().reset_index()
-    temp.columns=['aid','aid_educationCount']
-    temp.to_csv(feature_data_path+'aid_educationCount.csv',index=False)
-
-    print("aid_LBS")
-    temp = data.groupby('LBS')['aid'].count().reset_index()
-    temp.columns=['aid','aid_LBSCount']
-    temp.to_csv(feature_data_path+'aid_LBSCount.csv',index=False)
-
-
-
-    print("adCategoryId_usercount")
-    temp = data.groupby('adCategoryId')['uid'].count().reset_index()
-    temp.columns = ['adCategoryId', 'adCategoryId_count']
-    temp.to_csv(feature_data_path + 'adCategoryId_count.csv', index=False)
-
-    print("adCategoryId_gender")
-    temp = data.groupby('gender')['adCategoryId'].count().reset_index()
-    temp.columns = ['adCategoryId', 'adCategoryId_genderCount']
-    temp.to_csv(feature_data_path + 'adCategoryId_gendercount.csv', index=False)
-
-    print("adCategoryId_age")
-    temp = data.groupby('age')['adCategoryId'].count().reset_index()
-    temp.columns = ['aid', 'adCategoryId_ageCount']
-    temp.to_csv(feature_data_path + 'adCategoryId_ageCount.csv', index=False)
-
-    print("adCategoryId_marriageStatus")
-    temp = data.groupby('marriageStatus')['adCategoryId'].count().reset_index()
-    temp.columns = ['adCategoryId', 'adCategoryId_marriageStatusCount']
-    temp.to_csv(feature_data_path + 'adCategoryId_marriageStatusCount.csv', index=False)
-
-    print("adCategoryId_education")
-    temp = data.groupby('education')['adCategoryId'].count().reset_index()
-    temp.columns = ['adCategoryId', 'adCategoryId_educationCount']
-    temp.to_csv(feature_data_path + 'adCategoryId_educationCount.csv', index=False)
-
-    print("adCategoryId_LBS")
-    temp = data.groupby('LBS')['adCategoryId'].count().reset_index()
-    temp.columns = ['adCategoryId', 'adCategoryId_LBSCount']
-    temp.to_csv(feature_data_path + 'adCategoryId_LBSCount.csv', index=False)
-'''
+model=LGB_predict(train_x,train_y,test_x,res)
